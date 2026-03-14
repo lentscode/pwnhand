@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
+
+var regex = regexp.MustCompile(`^[ ]*\d+`)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -30,7 +34,7 @@ func main() {
 	lines := make([]line, nLines)
 	for i := range lines {
 		lines[i] = line{
-			idx: i,
+			idx:     i,
 			content: linesStr[i],
 		}
 	}
@@ -41,7 +45,7 @@ func main() {
 	for ; nLines > 0; nLines /= 10 {
 		m.lineNumberFigures++
 	}
-	
+
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -50,14 +54,26 @@ func main() {
 }
 
 type model struct {
-	lines    []line
-	rows     int
-	columns  int
-	y        int
+	lines       []line
+	actualLines []string
+	rows        int
+	columns     int
+	y           int
+	currentLine int
 
 	lineNumberFigures int
-	availableRows int
+	availableColumns  int
+
+	currentMode mode
 }
+
+type mode int
+
+const (
+	normalMode mode = iota
+	eolCommentMode
+	plateCommentMode
+)
 
 type comment struct {
 	content  string
@@ -65,25 +81,34 @@ type comment struct {
 	commType commType
 }
 
+type lineComments struct {
+	eolComm   string
+	plateComm string
+}
+
 type commType int
 
 const (
-	commEOL commType = iota
+	eolComm commType = iota
+	plateComm
 )
 
 type line struct {
-	idx int
+	idx     int
 	content string
-	comments []comment
+	lineComments
 }
 
 func (m model) renderLine(l line) []string {
 	lines := make([]string, 0)
-	contentLength := len(l.content)	
-	if m.availableRows == 0 {
+	if m.availableColumns == 0 {
 		return lines
 	}
-	
+	if l.lineComments.eolComm != "" || m.currentLine == l.idx && m.currentMode != normalMode {
+		l.content += strings.Repeat(" ", 8) + "# " + l.lineComments.eolComm
+	}
+
+	contentLength := len(l.content)
 	i := 0
 	newLine := strings.Builder{}
 	format := fmt.Sprintf("%%%dd | ", m.lineNumberFigures)
@@ -93,14 +118,14 @@ func (m model) renderLine(l line) []string {
 		return lines
 	}
 
-	nSpaces := m.rows - m.availableRows
+	nSpaces := m.columns - m.availableColumns
 	for i < contentLength {
 		if i > 0 {
 			newLine.WriteString(strings.Repeat(" ", nSpaces))
 		}
-		end := min(i + m.availableRows, contentLength)
+		end := min(i+m.availableColumns, contentLength)
 		newLine.WriteString(l.content[i:end])
-		lines = append(lines,  newLine.String())
+		lines = append(lines, newLine.String())
 		newLine.Reset()
 		i = end
 	}
@@ -119,30 +144,120 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "k":
-			m.y = max(m.y-1, 0)
+			if m.currentMode == normalMode {
+				m.y = max(m.y-1, 0)
+			} else {
+				m.writeComment("k")
+			}
 		case "j":
-			m.y = min(m.y+1, len(m.lines))
+			if m.currentMode == normalMode {
+				m.y = min(m.y+1, len(m.actualLines)-1)
+			} else {
+				m.writeComment("j")
+			}
 		case "ctrl+u":
-			m.y = max(m.y-m.columns/2, 0)
+			if m.currentMode == normalMode {
+				m.y = max(m.y-m.rows/2, 0)
+			}
 		case "ctrl+d":
-			m.y = min(m.y+m.columns/2, len(m.lines))
+			if m.currentMode == normalMode {
+				m.y = min(m.y+m.rows/2, len(m.actualLines)-1)
+			}
+		case "c":
+			if m.currentMode == normalMode {
+				m.currentMode = eolCommentMode
+			} else {
+				m.writeComment("c")
+			}
+		case "esc":
+			m.currentMode = normalMode
+		case "backspace":
+			if m.currentMode != normalMode {
+				m.writeComment("backspace")
+			}
+		//TODO: better handle the enter, for now confirms the comment
+		case "enter":
+			m.currentMode = normalMode
+		default:
+			m.writeComment(msg.String())
 		}
 	case tea.WindowSizeMsg:
-		m.columns = msg.Height
-		m.rows = msg.Width
-		m.availableRows = m.rows - m.lineNumberFigures - 3
+		m.columns = msg.Width
+		m.rows = msg.Height - 1
+		m.availableColumns = m.columns - m.lineNumberFigures - 3
 	case tea.MouseMotionMsg:
-		m.y = min(max(m.y+msg.Y, 0), len(m.lines))
+		m.y = min(max(m.y+msg.Y, 0), len(m.actualLines))
 	}
-	return m, nil
-}
 
-func (m model) View() tea.View {
 	lines := make([]string, 0)
 	for _, l := range m.lines {
 		lines = append(lines, m.renderLine(l)...)
 	}
-	lines = lines[m.y:min(m.y+m.columns, len(lines))]
-	v := tea.NewView(strings.Join(lines, "\n") + "\n")
+	m.actualLines = lines
+
+	if len(m.actualLines) == 0 {
+		return m, nil
+	}
+
+	if lineStart := regex.FindString(m.actualLines[m.y]); lineStart != "" {
+		lineStart = strings.TrimLeft(lineStart, " ")
+		lineNumber, err := strconv.Atoi(lineStart)
+		if err == nil {
+			m.currentLine = lineNumber
+		}
+	}
+	return m, nil
+}
+
+func (m model) writeComment(str string) {
+	if str == "" {
+		return
+	}
+
+	switch m.currentMode {
+	case eolCommentMode:
+		if str == "backspace" {
+			deleteCharacterFromString(&m.lines[m.currentLine].eolComm)
+		} else {
+			m.lines[m.currentLine].eolComm += decodeSpecialCharacters(str)
+		}
+	case plateCommentMode:
+		if str == "backspace" {
+			deleteCharacterFromString(&m.lines[m.currentLine].plateComm)
+		} else {
+			m.lines[m.currentLine].plateComm += decodeSpecialCharacters(str)
+		}
+	}
+}
+
+func (m model) View() tea.View {
+	lines := m.actualLines[m.y:min(m.y+m.rows, len(m.actualLines))]
+	var statusBar string
+	if m.currentMode == normalMode {
+		statusBar = "NORMAL"
+	} else {
+		statusBar = "COMMENT"
+	}
+	newLinesToAdd := max(0, m.rows - len(m.actualLines) + m.y) + 1
+	v := tea.NewView(strings.Join(lines, "\n") + strings.Repeat("\n", newLinesToAdd) + statusBar)
 	return v
+}
+
+func deleteCharacterFromString(str *string) {
+	if len(*str) == 0 {
+		return
+	}
+
+	*str = (*str)[:len(*str)-1]
+}
+
+func decodeSpecialCharacters(str string) string {
+	switch str {
+	case "enter":
+		return "\n"
+	case "space":
+		return " "
+	default:
+		return str
+	}
 }
