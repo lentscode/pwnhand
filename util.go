@@ -4,6 +4,13 @@ import (
 	"regexp"
 )
 
+const (
+	ansiEscape       = "\x1b"
+	ansiColorReset   = ansiEscape + "[0m"
+	ansiColorBlackFg = ansiEscape + "[0;30m"
+	ansiColorWhiteBg = ansiEscape + "[0;100m"
+)
+
 var regex = regexp.MustCompile(`^[ ]*\d+`)
 
 func deleteCharacterFromString(str *string) {
@@ -23,4 +30,8 @@ func decodeSpecialCharacters(str string) string {
 	default:
 		return str
 	}
+}
+
+func blackOnWhite(str string) string {
+	return ansiColorBlackFg + ansiColorWhiteBg + str + ansiColorReset
 }

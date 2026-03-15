@@ -14,11 +14,14 @@ type model struct {
 	actualLines []string
 	rows        int
 	columns     int
-	y           int
 	currentLine int
 
 	lineNumberFigures int
 	availableColumns  int
+
+	y           int
+	renderStart int
+	renderEnd   int
 
 	currentMode mode
 
@@ -51,11 +54,11 @@ type line struct {
 	lineComments
 }
 
-func (m *model) Init() tea.Cmd {
+func (m model) Init() tea.Cmd {
 	return nil
 }
 
-func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
@@ -64,23 +67,41 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "k":
 			if m.currentMode == normalMode {
-				m.y = max(m.y-1, 0)
+				m.y = max(0, m.y-1)
+				if m.y < m.renderStart {
+					m.renderEnd--
+					m.renderStart--
+				}
 			} else {
 				m.writeComment("k")
 			}
 		case "j":
 			if m.currentMode == normalMode {
-				m.y = min(m.y+1, len(m.actualLines)-1)
+				m.y = min(len(m.actualLines)-1, m.y+1)
+				if m.y >= m.renderEnd {
+					m.renderEnd++
+					m.renderStart++
+				}
 			} else {
 				m.writeComment("j")
 			}
 		case "ctrl+u":
 			if m.currentMode == normalMode {
-				m.y = max(m.y-m.rows/2, 0)
+				offset := m.rows/2
+				m.y = max(m.y-offset, 0)
+
+				renderOffset := min(max(0, m.renderStart), offset)
+				m.renderEnd -= renderOffset
+				m.renderStart -= renderOffset
 			}
 		case "ctrl+d":
 			if m.currentMode == normalMode {
-				m.y = min(m.y+m.rows/2, len(m.actualLines)-1)
+				offset := m.rows/2
+				m.y = min(m.y+offset, len(m.actualLines)-1)
+
+				renderOffset := min(max(0, len(m.actualLines)-m.renderEnd), offset)
+				m.renderEnd += renderOffset
+				m.renderStart += renderOffset
 			}
 		case "c":
 			if m.currentMode == normalMode {
@@ -105,11 +126,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.columns = msg.Width
 		m.rows = msg.Height - 1
 		m.availableColumns = m.columns - m.lineNumberFigures - 3
+		m.renderEnd = m.renderStart + msg.Height - 1
 
 	case tea.MouseMotionMsg:
 		m.y = min(max(m.y+msg.Y, 0), len(m.actualLines))
 	}
 
+	m.setCurrentLine()
 	lines := make([]string, 0)
 	for _, l := range m.lines {
 		lines = append(lines, m.renderLine(l)...)
@@ -119,7 +142,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if len(m.actualLines) == 0 {
 		return m, nil
 	}
-	m.setCurrentLine()
 	return m, nil
 }
 
@@ -144,16 +166,15 @@ func (m *model) writeComment(str string) {
 	}
 }
 
-func (m *model) View() tea.View {
-	lines := m.actualLines[m.y:min(m.y+m.rows, len(m.actualLines))]
+func (m model) View() tea.View {
+	lines := m.actualLines[m.renderStart:m.renderEnd]
 	var statusBar string
 	if m.currentMode == normalMode {
 		statusBar = "NORMAL"
 	} else {
 		statusBar = "COMMENT"
 	}
-	newLinesToAdd := max(0, m.rows-len(m.actualLines)+m.y) + 1
-	v := tea.NewView(strings.Join(lines, "\n") + strings.Repeat("\n", newLinesToAdd) + statusBar)
+	v := tea.NewView(strings.Join(lines, "\n") + "\n" + statusBar)
 	return v
 }
 
@@ -172,7 +193,11 @@ func (m *model) renderLine(l line) []string {
 	format := fmt.Sprintf("%%%dd | ", m.lineNumberFigures)
 	fmt.Fprintf(&newLine, format, l.idx)
 	if contentLength == 0 {
-		lines = append(lines, newLine.String())
+		if l.idx == m.currentLine {
+			lines = append(lines, blackOnWhite(newLine.String()))
+		} else {
+			lines = append(lines, newLine.String())
+		}
 		return lines
 	}
 
@@ -183,7 +208,11 @@ func (m *model) renderLine(l line) []string {
 		}
 		end := min(i+m.availableColumns, contentLength)
 		newLine.WriteString(l.content[i:end])
-		lines = append(lines, newLine.String())
+		if l.idx == m.currentLine {
+			lines = append(lines, blackOnWhite(newLine.String()))
+		} else {
+			lines = append(lines, newLine.String())
+		}
 		newLine.Reset()
 		i = end
 	}
@@ -192,6 +221,9 @@ func (m *model) renderLine(l line) []string {
 }
 
 func (m *model) setCurrentLine() {
+	if len(m.actualLines) == 0 {
+		return
+	}
 	if lineStart := regex.FindString(m.actualLines[m.y]); lineStart != "" {
 		lineStart = strings.TrimLeft(lineStart, " ")
 		lineNumber, err := strconv.Atoi(lineStart)
