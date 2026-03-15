@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -49,8 +48,10 @@ const (
 )
 
 type line struct {
-	idx     int
-	content string
+	idx       int
+	content   string
+	size      int
+	plateSize int
 	lineComments
 }
 
@@ -67,37 +68,46 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "k":
 			if m.currentMode == normalMode {
-				m.y = max(0, m.y-1)
+				m.currentLine = max(0, m.currentLine-1)
+				currentLineSize := m.lines[m.currentLine].size + m.lines[m.currentLine].plateSize
+				m.y = max(0, m.y-currentLineSize)
 				if m.y < m.renderStart {
-					m.renderEnd--
-					m.renderStart--
+					m.renderEnd -= currentLineSize
+					m.renderStart -= currentLineSize
 				}
 			} else {
 				m.writeComment("k")
 			}
 		case "j":
 			if m.currentMode == normalMode {
-				m.y = min(len(m.actualLines)-1, m.y+1)
+				currentLineSize := m.lines[m.currentLine].size
+				if m.currentLine < len(m.lines)-1 {
+					currentLineSize += m.lines[m.currentLine+1].plateSize
+				}
+				m.y = min(len(m.actualLines)-1, m.y+currentLineSize)
+				m.currentLine = min(len(m.lines)-1, m.currentLine+1)
 				if m.y >= m.renderEnd {
-					m.renderEnd++
-					m.renderStart++
+					m.renderEnd += currentLineSize
+					m.renderStart += currentLineSize
 				}
 			} else {
 				m.writeComment("j")
 			}
 		case "ctrl+u":
+			break //TODO: fix this
 			if m.currentMode == normalMode {
-				offset := m.rows/2
-				m.y = max(m.y-offset, 0)
+				offset := m.rows / 2
+				m.currentLine = max(m.currentLine-offset, 0)
 
 				renderOffset := min(max(0, m.renderStart), offset)
 				m.renderEnd -= renderOffset
 				m.renderStart -= renderOffset
 			}
 		case "ctrl+d":
+			break //TODO: fix this
 			if m.currentMode == normalMode {
-				offset := m.rows/2
-				m.y = min(m.y+offset, len(m.actualLines)-1)
+				offset := m.rows / 2
+				m.currentLine = min(m.currentLine+offset, len(m.actualLines)-1)
 
 				renderOffset := min(max(0, len(m.actualLines)-m.renderEnd), offset)
 				m.renderEnd += renderOffset
@@ -109,6 +119,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.writeComment("c")
 			}
+		case "C":
+			if m.currentMode == normalMode {
+				m.currentMode = plateCommentMode
+			} else {
+				m.writeComment("C")
+			}
 		case "esc":
 			m.currentMode = normalMode
 		case "backspace":
@@ -117,7 +133,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		//TODO: better handle the enter, for now confirms the comment
 		case "enter":
-			m.currentMode = normalMode
+			if m.currentMode == plateCommentMode {
+				m.writeComment("enter")
+			} else {
+				m.currentMode = normalMode
+			}
 		default:
 			m.writeComment(msg.String())
 		}
@@ -129,13 +149,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderEnd = m.renderStart + msg.Height - 1
 
 	case tea.MouseMotionMsg:
-		m.y = min(max(m.y+msg.Y, 0), len(m.actualLines))
+		m.currentLine = min(max(m.currentLine+msg.Y, 0), len(m.actualLines))
 	}
 
-	m.setCurrentLine()
 	lines := make([]string, 0)
-	for _, l := range m.lines {
-		lines = append(lines, m.renderLine(l)...)
+	for i := range m.lines {
+		lines = append(lines, m.renderLine(&m.lines[i])...)
 	}
 	m.actualLines = lines
 
@@ -143,6 +162,96 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+func (m model) View() tea.View {
+	lines := m.actualLines[m.renderStart:m.renderEnd]
+	var statusBar string
+	if m.currentMode == normalMode {
+		statusBar = "NORMAL"
+	} else {
+		statusBar = "COMMENT"
+	}
+	v := tea.NewView(strings.Join(lines, "\n") + "\n" + bold(statusBar))
+	return v
+}
+
+func (m *model) renderLine(l *line) []string {
+	lines := make([]string, 0)
+	l.size = 1
+	l.plateSize = 0
+	content := l.content
+	if m.availableColumns == 0 {
+		return lines
+	}
+	if l.lineComments.eolComm != "" || m.currentLine == l.idx && m.currentMode == eolCommentMode {
+		content += strings.Repeat(" ", 8) + "# " + l.lineComments.eolComm
+	}
+
+	nSpaces := m.columns - m.availableColumns
+	if plateComm := l.lineComments.plateComm; plateComm != "" || m.currentLine == l.idx && m.currentMode == plateCommentMode {
+		plateCommentLines := strings.SplitSeq(plateComm, "\n")
+		for pl := range plateCommentLines {
+			lines = append(lines, strings.Repeat(" ", nSpaces)+"# "+pl)
+			l.plateSize++
+		}
+
+		if len(lines) == 0 {
+			lines = append(lines, strings.Repeat(" ", nSpaces)+"# ")
+		}
+	}
+
+	contentLength := len(content)
+	newLine := strings.Builder{}
+	format := fmt.Sprintf("%%%dd | ", m.lineNumberFigures)
+	fmt.Fprintf(&newLine, format, l.idx)
+	if contentLength == 0 {
+		if l.idx == m.currentLine {
+			lines = append(lines, blackOnWhite(newLine.String()))
+		} else {
+			lines = append(lines, newLine.String())
+		}
+		return lines
+	}
+
+	i := 0
+	for i < contentLength {
+		if i > 0 {
+			newLine.WriteString(strings.Repeat(" ", nSpaces))
+			l.size++
+		}
+		end := min(i+m.availableColumns, contentLength)
+		newLine.WriteString(content[i:end])
+		if l.idx == m.currentLine {
+			lines = append(lines, blackOnWhite(newLine.String()))
+		} else {
+			lines = append(lines, newLine.String())
+		}
+		newLine.Reset()
+		i = end
+	}
+
+	return lines
+}
+
+func (m *model) saveState() {
+	yamlData := &yamlData{
+		Disas:    m.content,
+		Comments: make([]string, 0),
+	}
+
+	for _, l := range m.lines {
+		if l.eolComm != "" {
+			commentEntry := fmt.Sprintf("%d:eol:%s", l.idx, l.eolComm)
+			yamlData.Comments = append(yamlData.Comments, commentEntry)
+		}
+		if l.plateComm != "" {
+			commentEntry := fmt.Sprintf("%d:plate:%s", l.idx, l.plateComm)
+			yamlData.Comments = append(yamlData.Comments, commentEntry)
+		}
+	}
+
+	m.err = saveFile("pwnhand.yaml", yamlData)
 }
 
 func (m *model) writeComment(str string) {
@@ -164,91 +273,4 @@ func (m *model) writeComment(str string) {
 			m.lines[m.currentLine].plateComm += decodeSpecialCharacters(str)
 		}
 	}
-}
-
-func (m model) View() tea.View {
-	lines := m.actualLines[m.renderStart:m.renderEnd]
-	var statusBar string
-	if m.currentMode == normalMode {
-		statusBar = "NORMAL"
-	} else {
-		statusBar = "COMMENT"
-	}
-	v := tea.NewView(strings.Join(lines, "\n") + "\n" + bold(statusBar))
-	return v
-}
-
-func (m *model) renderLine(l line) []string {
-	lines := make([]string, 0)
-	if m.availableColumns == 0 {
-		return lines
-	}
-	if l.lineComments.eolComm != "" || m.currentLine == l.idx && m.currentMode != normalMode {
-		l.content += strings.Repeat(" ", 8) + "# " + l.lineComments.eolComm
-	}
-
-	contentLength := len(l.content)
-	i := 0
-	newLine := strings.Builder{}
-	format := fmt.Sprintf("%%%dd | ", m.lineNumberFigures)
-	fmt.Fprintf(&newLine, format, l.idx)
-	if contentLength == 0 {
-		if l.idx == m.currentLine {
-			lines = append(lines, blackOnWhite(newLine.String()))
-		} else {
-			lines = append(lines, newLine.String())
-		}
-		return lines
-	}
-
-	nSpaces := m.columns - m.availableColumns
-	for i < contentLength {
-		if i > 0 {
-			newLine.WriteString(strings.Repeat(" ", nSpaces))
-		}
-		end := min(i+m.availableColumns, contentLength)
-		newLine.WriteString(l.content[i:end])
-		if l.idx == m.currentLine {
-			lines = append(lines, blackOnWhite(newLine.String()))
-		} else {
-			lines = append(lines, newLine.String())
-		}
-		newLine.Reset()
-		i = end
-	}
-
-	return lines
-}
-
-func (m *model) setCurrentLine() {
-	if len(m.actualLines) == 0 {
-		return
-	}
-	if lineStart := regex.FindString(m.actualLines[m.y]); lineStart != "" {
-		lineStart = strings.TrimLeft(lineStart, " ")
-		lineNumber, err := strconv.Atoi(lineStart)
-		if err == nil {
-			m.currentLine = lineNumber
-		}
-	}
-}
-
-func (m *model) saveState() {
-	yamlData := &yamlData{
-		Disas:    m.content,
-		Comments: make([]string, 0),
-	}
-
-	for _, l := range m.lines {
-		if l.eolComm != "" {
-			commentEntry := fmt.Sprintf("%d:eol:%s", l.idx, l.eolComm)
-			yamlData.Comments = append(yamlData.Comments, commentEntry)
-		}
-		if l.plateComm != "" {
-			commentEntry := fmt.Sprintf("%d:eol:%s", l.idx, l.plateComm)
-			yamlData.Comments = append(yamlData.Comments, commentEntry)
-		}
-	}
-
-	m.err = saveFile("pwnhand.yaml", yamlData)
 }

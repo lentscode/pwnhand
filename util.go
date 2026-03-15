@@ -1,18 +1,12 @@
 package main
 
-import (
-	"regexp"
-)
-
 const (
 	ansiEscape       = "\x1b"
 	ansiColorReset   = ansiEscape + "[0m"
 	ansiColorBlackFg = ansiEscape + "[0;30m"
 	ansiColorWhiteBg = ansiEscape + "[0;100m"
-	ansiColorBold = ansiEscape + "[1m"
+	ansiColorBold    = ansiEscape + "[1m"
 )
-
-var regex = regexp.MustCompile(`^[ ]*\d+`)
 
 func deleteCharacterFromString(str *string) {
 	if len(*str) == 0 {
