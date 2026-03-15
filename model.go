@@ -174,7 +174,7 @@ func (m model) View() tea.View {
 	} else {
 		statusBar = "COMMENT"
 	}
-	v := tea.NewView(strings.Join(lines, "\n") + "\n" + statusBar)
+	v := tea.NewView(strings.Join(lines, "\n") + "\n" + bold(statusBar))
 	return v
 }
 

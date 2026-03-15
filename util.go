@@ -9,6 +9,7 @@ const (
 	ansiColorReset   = ansiEscape + "[0m"
 	ansiColorBlackFg = ansiEscape + "[0;30m"
 	ansiColorWhiteBg = ansiEscape + "[0;100m"
+	ansiColorBold = ansiEscape + "[1m"
 )
 
 var regex = regexp.MustCompile(`^[ ]*\d+`)
@@ -34,4 +35,8 @@ func decodeSpecialCharacters(str string) string {
 
 func blackOnWhite(str string) string {
 	return ansiColorBlackFg + ansiColorWhiteBg + str + ansiColorReset
+}
+
+func bold(str string) string {
+	return ansiColorBold + str + ansiColorReset
 }
