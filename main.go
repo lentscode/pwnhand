@@ -18,7 +18,7 @@ func main() {
 
 	var content string
 	yamlData, err := loadFile("pwnhand.yaml")
-	if err != nil {
+	if err == nil {
 		content = yamlData.Disas
 	} else {
 		elfPath := os.Args[1]
@@ -28,7 +28,7 @@ func main() {
 
 		err := cmd.Run()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err.Error())
+			fmt.Fprintln(os.Stderr, "fatal: objdump command failed")
 			os.Exit(1)
 		}
 
