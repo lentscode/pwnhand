@@ -2,13 +2,14 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"strconv"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 type model struct {
+	content     string
 	lines       []line
 	actualLines []string
 	rows        int
@@ -20,6 +21,8 @@ type model struct {
 	availableColumns  int
 
 	currentMode mode
+
+	err error
 }
 
 type mode int
@@ -29,12 +32,6 @@ const (
 	eolCommentMode
 	plateCommentMode
 )
-
-type comment struct {
-	content  string
-	line     int
-	commType commType
-}
 
 type lineComments struct {
 	eolComm   string
@@ -63,6 +60,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
+			m.saveState()
 			return m, tea.Quit
 		case "k":
 			if m.currentMode == normalMode {
@@ -154,7 +152,7 @@ func (m *model) View() tea.View {
 	} else {
 		statusBar = "COMMENT"
 	}
-	newLinesToAdd := max(0, m.rows - len(m.actualLines) + m.y) + 1
+	newLinesToAdd := max(0, m.rows-len(m.actualLines)+m.y) + 1
 	v := tea.NewView(strings.Join(lines, "\n") + strings.Repeat("\n", newLinesToAdd) + statusBar)
 	return v
 }
@@ -201,4 +199,24 @@ func (m *model) setCurrentLine() {
 			m.currentLine = lineNumber
 		}
 	}
+}
+
+func (m *model) saveState() {
+	yamlData := &yamlData{
+		Disas:    m.content,
+		Comments: make([]string, 0),
+	}
+
+	for _, l := range m.lines {
+		if l.eolComm != "" {
+			commentEntry := fmt.Sprintf("%d:eol:%s", l.idx, l.eolComm)
+			yamlData.Comments = append(yamlData.Comments, commentEntry)
+		}
+		if l.plateComm != "" {
+			commentEntry := fmt.Sprintf("%d:eol:%s", l.idx, l.plateComm)
+			yamlData.Comments = append(yamlData.Comments, commentEntry)
+		}
+	}
+
+	m.err = saveFile("pwnhand.yaml", yamlData)
 }
