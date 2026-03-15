@@ -11,16 +11,16 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "fatal: need ELF file path")
-		os.Exit(1)
-	}
-
 	var content string
 	yamlData, err := loadFile("pwnhand.yaml")
 	if err == nil {
 		content = yamlData.Disas
 	} else {
+		if len(os.Args) < 2 {
+			fmt.Fprintln(os.Stderr, "fatal: need ELF file path")
+			os.Exit(1)
+		}
+
 		elfPath := os.Args[1]
 		cmd := exec.Command("objdump", "-d", "-M", "intel", elfPath)
 		var objdumpRes strings.Builder
