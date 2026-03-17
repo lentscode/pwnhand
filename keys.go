@@ -40,10 +40,6 @@ func (m *model) handlek() {
 		m.currentLine = max(0, m.currentLine-1)
 		currentLineSize := m.lines[m.currentLine].size + m.lines[m.currentLine].plateSize
 		m.y = max(0, m.y-currentLineSize)
-		if m.y < m.renderStart {
-			m.renderEnd -= currentLineSize
-			m.renderStart -= currentLineSize
-		}
 	} else {
 		m.writeComment("k")
 	}
@@ -57,10 +53,6 @@ func (m *model) handlej() {
 		}
 		m.y = min(len(m.actualLines)-1, m.y+currentLineSize)
 		m.currentLine = min(len(m.lines)-1, m.currentLine+1)
-		if m.y >= m.renderEnd {
-			m.renderEnd += currentLineSize
-			m.renderStart += currentLineSize
-		}
 	} else {
 		m.writeComment("j")
 	}

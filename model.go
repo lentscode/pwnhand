@@ -74,6 +74,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMotionMsg:
 		m.currentLine = min(max(m.currentLine+msg.Y, 0), len(m.actualLines))
 	}
+	m.adaptRenderWindow()
 
 	lines := make([]string, 0)
 	for i := range m.lines {
@@ -196,4 +197,14 @@ func (m *model) writeComment(str string) {
 			m.lines[m.currentLine].plateComm += decodeSpecialCharacters(str)
 		}
 	}
+}
+
+func (m *model) adaptRenderWindow() {
+		if m.y >= m.renderEnd {
+			m.renderEnd = min(len(m.actualLines), m.y + 1)
+			m.renderStart = max(0, m.renderEnd - m.rows)
+		} else if m.y < m.renderStart {
+			m.renderStart = max(0, m.y)
+			m.renderEnd = min(len(m.actualLines), m.renderStart + m.rows)
+		}
 }
